@@ -18,7 +18,7 @@ func main() {
 	if err != nil {
 		return
 	}
-	client.Close()
+	defer client.Close()
 	// Get all available Wi-Fi interfaces
 	interfaces, err := client.Interfaces()
 	if err != nil {
