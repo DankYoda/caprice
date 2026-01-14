@@ -1,23 +1,55 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"net"
-	"strings"
+	"log"
+	"time"
+
+	//"net"
+
+	"github.com/mdlayher/wifi"
 )
 
 func main() {
 	//gets all interfaces
-	interfaces, err := net.Interfaces()
-	wifiInterface := make([]net.Interface, 0)
+	//Creates a new client for scanning
+	client, err := wifi.New()
 	if err != nil {
-		panic(err)
+		return
 	}
-	// returns all wifi interfaces
-	for _, inter := range interfaces {
-		if strings.Contains(inter.Name, "wlan") || strings.Contains(inter.Name, "wifi") || strings.Contains(inter.Name, "wlp") {
-			wifiInterface = append(wifiInterface, inter)
-		}
+	client.Close()
+	// Get all available Wi-Fi interfaces
+	interfaces, err := client.Interfaces()
+	if err != nil {
+		log.Fatal(err)
 	}
-	fmt.Printf("Hello and welcome, %v!\n", wifiInterface)
+	// Use the first available interface for scanning
+	if len(interfaces) == 0 {
+		log.Fatal("No Wi-Fi interfaces found")
+	}
+	ifi := interfaces[1]
+	fmt.Printf("Using interface: %s (%s)\n", ifi.Name, ifi.HardwareAddr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Request a scan on the selected interface
+	err = client.Scan(ctx, ifi)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Might need some async magic to let the client.Scan call finish
+	aps, err := client.AccessPoints(ifi)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("Available Access Points:")
+	fmt.Printf("%-32s %-18s %-5s\n", "SSID", "BSSID", "Signal")
+	for _, ap := range aps {
+		//fmt.Printf("%v\n", *ap)
+		fmt.Printf("%-32s %-18s %-5d dBm\n", ap.SSID, ap.BSSID.String(), ap.Signal)
+	}
 }
