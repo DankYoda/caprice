@@ -47,9 +47,10 @@ func main() {
 	}
 
 	fmt.Println("Available Access Points:")
-	fmt.Printf("%-32s %-18s %-5s\n", "SSID", "BSSID", "Signal")
+	fmt.Printf("%-32s %-18s %-5s %-18s\n", "SSID", "BSSID", "Signal", "AKM")
 	for _, ap := range aps {
-		//fmt.Printf("%v\n", *ap)
-		fmt.Printf("%-32s %-18s %-5d dBm\n", ap.SSID, ap.BSSID.String(), ap.Signal)
+		if ap.SSID != "" {
+			fmt.Printf("%-32s %-18s %d%% %v\n", ap.SSID, ap.BSSID.String(), 2*((ap.Signal/100)+100), ap.RSN.AKMs)
+		}
 	}
 }
