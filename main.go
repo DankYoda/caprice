@@ -18,21 +18,22 @@ func main() {
 		"/",
 	)
 
-	var managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant
+	var managed map[dbus.ObjectPath]map[string]map[string]dbus.Variant
 
 	err = obj.Call(
 		"org.freedesktop.DBus.ObjectManager.GetManagedObjects",
 		0,
-	).Store(&managedObjects)
+	).Store(&managed)
 
 	if err != nil {
 		panic(err)
 	}
 
-	for path, interfaces := range managedObjects {
-		fmt.Println(path)
-		for iface := range interfaces {
-			fmt.Println("  ", iface)
+	for _, ifaces := range managed {
+		device, hasDevice := ifaces["net.connman.iwd.Device"]
+		_, hasStation := ifaces["net.connman.iwd.Station"]
+		if hasDevice && hasStation {
+			fmt.Println("Wi-Fi interface:", device)
 		}
 	}
 }
