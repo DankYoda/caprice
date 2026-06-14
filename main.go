@@ -28,11 +28,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
+	var allWifiAdapters []map[string]dbus.Variant
 	for _, ifaces := range managed {
 		device, hasDevice := ifaces["net.connman.iwd.Device"]
 		_, hasStation := ifaces["net.connman.iwd.Station"]
 		if hasDevice && hasStation {
+			allWifiAdapters = append(allWifiAdapters, device)
 			fmt.Println("Wi-Fi interface:", device)
 		}
 	}
