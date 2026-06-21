@@ -231,7 +231,6 @@ func getNetworksAndAdapters() ([]wifiNetwork, []wifiAdapter) {
 			path:      string(path),
 		}
 		networks = append(networks, net)
-		fmt.Println(net)
 	}
 	return networks, wifiAdapters
 }
