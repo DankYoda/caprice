@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/godbus/dbus/v5"
@@ -28,14 +27,14 @@ func main() {
 	}
 	stationPaths := getStations(managedObjects)
 	discoverNetworks(conn, stationPaths[0])
-	initializeNetworks(managedObjects)
+	getNetworks(conn, stationPaths[0], managedObjects)
 
 	//bubble tea here
-	p := tea.NewProgram(initialModel())
-	if _, err := p.Run(); err != nil {
-		fmt.Printf("Alas, there's been an error: %v", err)
-		os.Exit(1)
-	}
+	//p := tea.NewProgram(initialModel())
+	//if _, err := p.Run(); err != nil {
+	//	fmt.Printf("Alas, there's been an error: %v", err)
+	//	os.Exit(1)
+	//}
 }
 
 type model struct {
@@ -155,26 +154,66 @@ func discoverNetworks(conn *dbus.Conn, stationPath dbus.ObjectPath) {
 			"net.connman.iwd.Station.Scan",
 			0,
 		)
+		var results []struct {
+			Path     dbus.ObjectPath
+			Strength int16
+		}
+
+		stationObj.Call(
+			"net.connman.iwd.Station.GetOrderedNetworks",
+			0,
+		).Store(&results)
+
 		if err != nil {
 			break
 		}
 	}
 }
 
-func initializeNetworks(managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant) []wifiNetwork {
+func getNetworks(conn *dbus.Conn, stationPath dbus.ObjectPath, managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant) []wifiNetwork {
+	stationObj := conn.Object(
+		"net.connman.iwd",
+		stationPath,
+	)
+	var orderedNetworks []struct {
+		Path     dbus.ObjectPath
+		Strength int16
+	}
+
+	stationObj.Call(
+		"net.connman.iwd.Station.GetOrderedNetworks",
+		0,
+	).Store(&orderedNetworks)
+
 	networks := make([]wifiNetwork, 0)
-	for _, ifaces := range managedObjects {
+	for path, ifaces := range managedObjects {
 		network, err := ifaces["net.connman.iwd.Network"]
 		if !err {
 			continue
 		}
-		networks = append(networks, wifiNetwork{
-			name:      network["Name"].String(),
+		var signalStrength int16
+		for _, value := range orderedNetworks {
+			if value.Path == path {
+				signalStrength = value.Strength
+				break
+			}
+		}
+		net := wifiNetwork{
+			name:      network["Name"].Value().(string),
 			connected: network["Connected"].Value().(bool),
 			device:    network["Device"].String(),
-			connType:  network["Type"].String(),
-		},
-		)
+			connType:  network["Type"].Value().(string),
+			strength:  signalStrength,
+			path:      string(path),
+		}
+		networks = append(networks, net)
+		fmt.Println(net.name)
+		fmt.Println(net.connected)
+		fmt.Println(net.device)
+		fmt.Println(net.strength)
+		fmt.Println(net.path)
+		fmt.Println(net.connType)
+		fmt.Println("\n")
 	}
 	return networks
 }
@@ -184,4 +223,6 @@ type wifiNetwork struct {
 	connected bool
 	device    string
 	connType  string
+	strength  int16
+	path      string
 }
