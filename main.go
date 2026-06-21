@@ -203,7 +203,7 @@ func getNetworks(conn *dbus.Conn, stationPath dbus.ObjectPath, managedObjects ma
 			connected: network["Connected"].Value().(bool),
 			device:    network["Device"].String(),
 			connType:  network["Type"].Value().(string),
-			strength:  signalStrength,
+			strength:  2 * ((signalStrength / 100) + 100),
 			path:      string(path),
 		}
 		networks = append(networks, net)
