@@ -2,52 +2,35 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/godbus/dbus/v5"
 )
 
 func main() {
-	conn, err := dbus.SystemBus()
-	if err != nil {
-		panic(err)
-	}
-	defer conn.Close()
-	obj := conn.Object("net.connman.iwd", "/")
-	//Get the managed objects
-	var managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant
-
-	err = obj.Call(
-		"org.freedesktop.DBus.ObjectManager.GetManagedObjects",
-		0,
-	).Store(&managedObjects)
-
-	if err != nil {
-		panic(err)
-	}
-	wifiAdapters := getWifiAdapters(managedObjects)
-	discoverNetworks(conn, wifiAdapters[0].path)
-	getNetworks(conn, wifiAdapters[0].path, managedObjects)
+	//discoverNetworks(conn, wifiAdapters[0].path)
 
 	//bubble tea here
-	//p := tea.NewProgram(initialModel())
-	//if _, err := p.Run(); err != nil {
-	//	fmt.Printf("Alas, there's been an error: %v", err)
-	//	os.Exit(1)
-	//}
+	p := tea.NewProgram(initialModel())
+	if _, err := p.Run(); err != nil {
+		fmt.Printf("Alas, there's been an error: %v", err)
+		os.Exit(1)
+	}
 }
 
 type model struct {
-	choices  []string
-	cursor   int
-	selected map[int]struct{}
+	wifiNetworks []wifiNetwork
+	wifiAdapters []wifiAdapter
+	cursor       int
+	selected     map[int]struct{}
 }
 
 func initialModel() model {
+	networks, adapters := getNetworksAndAdapters()
 	return model{
-		// Our to-do list is a grocery list
-		choices: []string{"Buy carrots", "Buy celery", "Buy kohlrabi"},
-
+		wifiNetworks: networks,
+		wifiAdapters: adapters,
 		// A map which indicates which choices are selected. We're using
 		// the  map like a mathematical set. The keys refer to the indexes
 		// of the `choices` slice, above.
@@ -81,7 +64,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// The "down" and "j" keys move the cursor down
 		case "down", "j":
-			if m.cursor < len(m.choices)-1 {
+			if m.cursor < len(m.wifiNetworks)-1 {
 				m.cursor++
 			}
 
@@ -104,10 +87,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() tea.View {
 	// The header
-	s := "What should we buy at the market?\n\n"
+	s := "\nBehold, the wifi\n\n"
 
 	// Iterate over our choices
-	for i, choice := range m.choices {
+	for i, choice := range m.wifiNetworks {
 
 		// Is the cursor pointing at this choice?
 		cursor := " " // no cursor
@@ -122,7 +105,12 @@ func (m model) View() tea.View {
 		}
 
 		// Render the row
-		s += fmt.Sprintf("%s [%s] %s\n", cursor, checked, choice)
+		s += fmt.Sprintf("%s [%s] %v\n", cursor, checked, choice)
+	}
+
+	s += "\nBehold, the Adapters!\n\n"
+	for _, adapter := range m.wifiAdapters {
+		s += fmt.Sprintf("%v\n", adapter)
 	}
 
 	// The footer
@@ -188,10 +176,28 @@ func discoverNetworks(conn *dbus.Conn, stationPath dbus.ObjectPath) {
 	}
 }
 
-func getNetworks(conn *dbus.Conn, stationPath dbus.ObjectPath, managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant) []wifiNetwork {
+func getNetworksAndAdapters() ([]wifiNetwork, []wifiAdapter) {
+	conn, err := dbus.SystemBus()
+	if err != nil {
+		panic(err)
+	}
+	defer conn.Close()
+	obj := conn.Object("net.connman.iwd", "/")
+	//Get the managed objects
+	var managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant
+
+	err = obj.Call(
+		"org.freedesktop.DBus.ObjectManager.GetManagedObjects",
+		0,
+	).Store(&managedObjects)
+
+	if err != nil {
+		panic(err)
+	}
+	wifiAdapters := getWifiAdapters(managedObjects)
 	stationObj := conn.Object(
 		"net.connman.iwd",
-		stationPath,
+		wifiAdapters[0].path,
 	)
 	var orderedNetworks []struct {
 		Path     dbus.ObjectPath
@@ -227,7 +233,7 @@ func getNetworks(conn *dbus.Conn, stationPath dbus.ObjectPath, managedObjects ma
 		networks = append(networks, net)
 		fmt.Println(net)
 	}
-	return networks
+	return networks, wifiAdapters
 }
 
 type wifiNetwork struct {
