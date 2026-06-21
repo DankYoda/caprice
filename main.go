@@ -25,9 +25,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	stationPaths := getStations(managedObjects)
-	discoverNetworks(conn, stationPaths[0])
-	getNetworks(conn, stationPaths[0], managedObjects)
+	wifiAdapters := getWifiAdapters(managedObjects)
+	discoverNetworks(conn, wifiAdapters[0].path)
+	getNetworks(conn, wifiAdapters[0].path, managedObjects)
 
 	//bubble tea here
 	//p := tea.NewProgram(initialModel())
@@ -132,15 +132,33 @@ func (m model) View() tea.View {
 	return tea.NewView(s)
 }
 
-func getStations(managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant) []dbus.ObjectPath {
+func getWifiAdapters(managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant) []wifiAdapter {
 	//Get the wlans
-	var stationPaths []dbus.ObjectPath
+	var wifiAdapters []wifiAdapter
 	for path, ifaces := range managedObjects {
 		if _, ok := ifaces["net.connman.iwd.Station"]; ok {
-			stationPaths = append(stationPaths, path)
+			wifiAdapters = append(wifiAdapters, wifiAdapter{
+				name:     ifaces["net.connman.iwd.Device"]["Name"].Value().(string),
+				address:  ifaces["net.connman.iwd.Device"]["Address"].Value().(string),
+				powered:  ifaces["net.connman.iwd.Device"]["Powered"].Value().(bool),
+				adapter:  ifaces["net.connman.iwd.Device"]["Adapter"].String(),
+				scanning: ifaces["net.connman.iwd.Station"]["Scanning"].Value().(bool),
+				state:    ifaces["net.connman.iwd.Station"]["State"].Value().(string),
+				path:     path,
+			})
 		}
 	}
-	return stationPaths
+	return wifiAdapters
+}
+
+type wifiAdapter struct {
+	name     string
+	address  string
+	powered  bool
+	adapter  string
+	scanning bool
+	state    string
+	path     dbus.ObjectPath
 }
 
 func discoverNetworks(conn *dbus.Conn, stationPath dbus.ObjectPath) {
@@ -202,18 +220,12 @@ func getNetworks(conn *dbus.Conn, stationPath dbus.ObjectPath, managedObjects ma
 			name:      network["Name"].Value().(string),
 			connected: network["Connected"].Value().(bool),
 			device:    network["Device"].String(),
-			connType:  network["Type"].Value().(string),
+			security:  network["Type"].Value().(string),
 			strength:  2 * ((signalStrength / 100) + 100),
 			path:      string(path),
 		}
 		networks = append(networks, net)
-		fmt.Println(net.name)
-		fmt.Println(net.connected)
-		fmt.Println(net.device)
-		fmt.Println(net.strength)
-		fmt.Println(net.path)
-		fmt.Println(net.connType)
-		fmt.Println("\n")
+		fmt.Println(net)
 	}
 	return networks
 }
@@ -222,7 +234,7 @@ type wifiNetwork struct {
 	name      string
 	connected bool
 	device    string
-	connType  string
+	security  string
 	strength  int16
 	path      string
 }
