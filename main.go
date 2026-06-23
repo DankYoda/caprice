@@ -1,16 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"os"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/godbus/dbus/v5"
+	"github.com/mdlayher/wifi"
 )
 
 func main() {
-	//discoverNetworks(conn, wifiAdapters[0].path)
-
+	//interfaces := getWifiAdapters()
+	//ScanForAccessPoints(interfaces[1])
 	//bubble tea here
 	p := tea.NewProgram(initialModel())
 	if _, err := p.Run(); err != nil {
@@ -20,17 +23,19 @@ func main() {
 }
 
 type model struct {
-	wifiNetworks []wifiNetwork
-	wifiAdapters []wifiAdapter
-	cursor       int
-	selected     map[int]struct{}
+	knownNetworks     []*wifi.BSS
+	availableNetworks []*wifi.BSS
+	adapters          []*wifi.Interface
+	cursor            int
+	selected          map[int]struct{}
 }
 
 func initialModel() model {
-	networks, adapters := getNetworksAndAdapters()
+	interfaces := getWifiAdapters()
 	return model{
-		wifiNetworks: networks,
-		wifiAdapters: adapters,
+		knownNetworks:     getKnownAccessPoints(interfaces[1]),
+		availableNetworks: getKnownAccessPoints(interfaces[1]),
+		adapters:          interfaces,
 		// A map which indicates which choices are selected. We're using
 		// the  map like a mathematical set. The keys refer to the indexes
 		// of the `choices` slice, above.
@@ -64,7 +69,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// The "down" and "j" keys move the cursor down
 		case "down", "j":
-			if m.cursor < len(m.wifiNetworks)-1 {
+			if m.cursor < len(m.knownNetworks)-1 {
 				m.cursor++
 			}
 
@@ -87,10 +92,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() tea.View {
 	// The header
-	s := "\nBehold, the wifi\n\n"
+	s := "\nBehold, the known networks!\n\n"
 
 	// Iterate over our choices
-	for i, choice := range m.wifiNetworks {
+	for i, choice := range m.knownNetworks {
 
 		// Is the cursor pointing at this choice?
 		cursor := " " // no cursor
@@ -108,9 +113,9 @@ func (m model) View() tea.View {
 		s += fmt.Sprintf("%s [%s] %v\n", cursor, checked, choice)
 	}
 
-	s += "\nBehold, the Adapters!\n\n"
-	for _, adapter := range m.wifiAdapters {
-		s += fmt.Sprintf("%v\n", adapter)
+	s += "\nBehold, the Networks!\n\n"
+	for _, network := range m.availableNetworks {
+		s += fmt.Sprintf("%v\n", network)
 	}
 
 	// The footer
@@ -120,126 +125,45 @@ func (m model) View() tea.View {
 	return tea.NewView(s)
 }
 
-func getWifiAdapters(managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant) []wifiAdapter {
-	//Get the wlans
-	var wifiAdapters []wifiAdapter
-	for path, ifaces := range managedObjects {
-		if _, ok := ifaces["net.connman.iwd.Station"]; ok {
-			wifiAdapters = append(wifiAdapters, wifiAdapter{
-				name:     ifaces["net.connman.iwd.Device"]["Name"].Value().(string),
-				address:  ifaces["net.connman.iwd.Device"]["Address"].Value().(string),
-				powered:  ifaces["net.connman.iwd.Device"]["Powered"].Value().(bool),
-				adapter:  ifaces["net.connman.iwd.Device"]["Adapter"].String(),
-				scanning: ifaces["net.connman.iwd.Station"]["Scanning"].Value().(bool),
-				state:    ifaces["net.connman.iwd.Station"]["State"].Value().(string),
-				path:     path,
-			})
-		}
-	}
-	return wifiAdapters
-}
-
-type wifiAdapter struct {
-	name     string
-	address  string
-	powered  bool
-	adapter  string
-	scanning bool
-	state    string
-	path     dbus.ObjectPath
-}
-
-func discoverNetworks(conn *dbus.Conn, stationPath dbus.ObjectPath) {
-	//Discovers the networks
-	for {
-		stationObj := conn.Object(
-			"net.connman.iwd",
-			stationPath,
-		)
-		err := stationObj.Call(
-			"net.connman.iwd.Station.Scan",
-			0,
-		)
-		var results []struct {
-			Path     dbus.ObjectPath
-			Strength int16
-		}
-
-		stationObj.Call(
-			"net.connman.iwd.Station.GetOrderedNetworks",
-			0,
-		).Store(&results)
-
-		if err != nil {
-			break
-		}
-	}
-}
-
-func getNetworksAndAdapters() ([]wifiNetwork, []wifiAdapter) {
-	conn, err := dbus.SystemBus()
+func getWifiAdapters() []*wifi.Interface {
+	client, err := wifi.New()
 	if err != nil {
-		panic(err)
+		log.Fatalf("failed to open wifi client: %v", err)
 	}
-	defer conn.Close()
-	obj := conn.Object("net.connman.iwd", "/")
-	//Get the managed objects
-	var managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant
+	defer client.Close()
 
-	err = obj.Call(
-		"org.freedesktop.DBus.ObjectManager.GetManagedObjects",
-		0,
-	).Store(&managedObjects)
+	// Get all Wi-Fi interfaces
+	interfaces, err := client.Interfaces()
+	if err != nil || len(interfaces) == 0 {
+		log.Fatalf("no wifi interfaces found: %v", err)
+	}
+	return interfaces
+}
+
+func ScanForAccessPoints(wifiInterface *wifi.Interface) {
+	client, err := wifi.New()
+	if err != nil {
+		log.Fatalf("failed to open wifi client: %v", err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(20*time.Second))
+	defer cancel()
+	err = client.Scan(ctx, wifiInterface)
+	if err != nil {
+		log.Fatalf("failed to get access points: %v", err)
+	}
+}
+
+func getKnownAccessPoints(wifiInterface *wifi.Interface) []*wifi.BSS {
+	client, err := wifi.New()
+	if err != nil {
+		log.Fatalf("failed to open wifi client: %v", err)
+	}
+	defer client.Close()
+	accessPoints, err := client.AccessPoints(wifiInterface)
 
 	if err != nil {
-		panic(err)
+		log.Fatalf("failed to get access points: %v", err)
 	}
-	wifiAdapters := getWifiAdapters(managedObjects)
-	stationObj := conn.Object(
-		"net.connman.iwd",
-		wifiAdapters[0].path,
-	)
-	var orderedNetworks []struct {
-		Path     dbus.ObjectPath
-		Strength int16
-	}
-
-	stationObj.Call(
-		"net.connman.iwd.Station.GetOrderedNetworks",
-		0,
-	).Store(&orderedNetworks)
-
-	networks := make([]wifiNetwork, 0)
-	for path, ifaces := range managedObjects {
-		network, err := ifaces["net.connman.iwd.Network"]
-		if !err {
-			continue
-		}
-		var signalStrength int16
-		for _, value := range orderedNetworks {
-			if value.Path == path {
-				signalStrength = value.Strength
-				break
-			}
-		}
-		net := wifiNetwork{
-			name:      network["Name"].Value().(string),
-			connected: network["Connected"].Value().(bool),
-			device:    network["Device"].String(),
-			security:  network["Type"].Value().(string),
-			strength:  2 * ((signalStrength / 100) + 100),
-			path:      string(path),
-		}
-		networks = append(networks, net)
-	}
-	return networks, wifiAdapters
-}
-
-type wifiNetwork struct {
-	name      string
-	connected bool
-	device    string
-	security  string
-	strength  int16
-	path      string
+	return accessPoints
 }
