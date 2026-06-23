@@ -118,6 +118,11 @@ func (m model) View() tea.View {
 		s += fmt.Sprintf("%v\n", network)
 	}
 
+	s += "\nBehold, the adapters!\n\n"
+	for _, network := range m.adapters {
+		s += fmt.Sprintf("%v\n", network)
+	}
+
 	// The footer
 	s += "\nPress q to quit.\n"
 
