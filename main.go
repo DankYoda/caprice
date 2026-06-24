@@ -45,18 +45,17 @@ func main() {
 		Foreground(lipgloss.Color("229")).
 		Background(lipgloss.Color("57")).
 		Bold(false)
-
 	t := table.New(
 		table.WithColumns(columns),
 		table.WithRows(rows),
 		table.WithHeight(20),
 		table.WithWidth(150),
 	)
-
 	t.SetStyles(s)
-
+	t.Focus()
 	p := tea.NewProgram(model{
 		networkTable: t,
+		selected:     -1,
 	})
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
@@ -66,8 +65,7 @@ func main() {
 
 type model struct {
 	networkTable table.Model
-	cursor       int
-	selected     map[int]struct{}
+	selected     int
 }
 
 func (m model) Init() tea.Cmd {
@@ -80,18 +78,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "esc":
-			if m.networkTable.Focused() {
-				m.networkTable.Blur()
-			} else {
-				m.networkTable.Focus()
-			}
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "enter":
-			return m, tea.Batch(
-				tea.Printf("Let's go to %s!", m.networkTable.SelectedRow()[1]),
-			)
+
 		}
 	}
 	m.networkTable, cmd = m.networkTable.Update(msg)
