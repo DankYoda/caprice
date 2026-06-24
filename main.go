@@ -5,17 +5,59 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
+	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/mdlayher/wifi"
 )
 
+var baseStyle = lipgloss.NewStyle().
+	BorderStyle(lipgloss.NormalBorder()).
+	BorderForeground(lipgloss.Color("240"))
+
 func main() {
-	//interfaces := getWifiAdapters()
-	//ScanForAccessPoints(interfaces[1])
-	//bubble tea here
-	p := tea.NewProgram(initialModel())
+	iface := getWifiAdapters()
+	ScanForAccessPoints(iface[1])
+	accessPoints := getKnownAccessPoints(iface[1])
+	columns := []table.Column{
+		{Title: "name", Width: 40},
+		{Title: "Signal", Width: 40},
+		{Title: "RSN", Width: 65},
+	}
+	rows := []table.Row{}
+	for _, accessPoint := range accessPoints {
+		rows = append(rows, table.Row{
+			accessPoint.SSID,
+			strconv.Itoa(int(2 * ((accessPoint.Signal / 100) + 100))),
+			accessPoint.RSN.String(),
+		})
+	}
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		BorderBottom(true).
+		Bold(false)
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("229")).
+		Background(lipgloss.Color("57")).
+		Bold(false)
+
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithRows(rows),
+		table.WithHeight(20),
+		table.WithWidth(150),
+	)
+
+	t.SetStyles(s)
+
+	p := tea.NewProgram(model{
+		networkTable: t,
+	})
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
@@ -23,24 +65,9 @@ func main() {
 }
 
 type model struct {
-	knownNetworks     []*wifi.BSS
-	availableNetworks []*wifi.BSS
-	adapters          []*wifi.Interface
-	cursor            int
-	selected          map[int]struct{}
-}
-
-func initialModel() model {
-	interfaces := getWifiAdapters()
-	return model{
-		knownNetworks:     getKnownAccessPoints(interfaces[1]),
-		availableNetworks: getKnownAccessPoints(interfaces[1]),
-		adapters:          interfaces,
-		// A map which indicates which choices are selected. We're using
-		// the  map like a mathematical set. The keys refer to the indexes
-		// of the `choices` slice, above.
-		selected: make(map[int]struct{}),
-	}
+	networkTable table.Model
+	cursor       int
+	selected     map[int]struct{}
 }
 
 func (m model) Init() tea.Cmd {
@@ -49,85 +76,30 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
-
-	// Is it a key press?
 	case tea.KeyPressMsg:
-
-		// Cool, what was the actual key pressed?
 		switch msg.String() {
-
-		// These keys should exit the program.
-		case "ctrl+c", "q":
-			return m, tea.Quit
-
-		// The "up" and "k" keys move the cursor up
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-
-		// The "down" and "j" keys move the cursor down
-		case "down", "j":
-			if m.cursor < len(m.knownNetworks)-1 {
-				m.cursor++
-			}
-
-		// The "enter" key and the space bar toggle the selected state
-		// for the item that the cursor is pointing at.
-		case "enter", "space":
-			_, ok := m.selected[m.cursor]
-			if ok {
-				delete(m.selected, m.cursor)
+		case "esc":
+			if m.networkTable.Focused() {
+				m.networkTable.Blur()
 			} else {
-				m.selected[m.cursor] = struct{}{}
+				m.networkTable.Focus()
 			}
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		case "enter":
+			return m, tea.Batch(
+				tea.Printf("Let's go to %s!", m.networkTable.SelectedRow()[1]),
+			)
 		}
 	}
-
-	// Return the updated model to the Bubble Tea runtime for processing.
-	// Note that we're not returning a command.
-	return m, nil
+	m.networkTable, cmd = m.networkTable.Update(msg)
+	return m, cmd
 }
 
 func (m model) View() tea.View {
-	// The header
-	s := "\nBehold, the known networks!\n\n"
-
-	// Iterate over our choices
-	for i, choice := range m.knownNetworks {
-
-		// Is the cursor pointing at this choice?
-		cursor := " " // no cursor
-		if m.cursor == i {
-			cursor = ">" // cursor!
-		}
-
-		// Is this choice selected?
-		checked := " " // not selected
-		if _, ok := m.selected[i]; ok {
-			checked = "x" // selected!
-		}
-
-		// Render the row
-		s += fmt.Sprintf("%s [%s] %v\n", cursor, checked, choice)
-	}
-
-	s += "\nBehold, the Networks!\n\n"
-	for _, network := range m.availableNetworks {
-		s += fmt.Sprintf("%v\n", network)
-	}
-
-	s += "\nBehold, the adapters!\n\n"
-	for _, network := range m.adapters {
-		s += fmt.Sprintf("%v\n", network)
-	}
-
-	// The footer
-	s += "\nPress q to quit.\n"
-
-	// Send the UI for rendering
-	return tea.NewView(s)
+	return tea.NewView(baseStyle.Render(m.networkTable.View()) + "\n  " + m.networkTable.HelpView() + "\n")
 }
 
 func getWifiAdapters() []*wifi.Interface {
