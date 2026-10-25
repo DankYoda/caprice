@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -19,6 +20,20 @@ import (
 var baseStyle = lipgloss.NewStyle().
 	BorderStyle(lipgloss.NormalBorder()).
 	BorderForeground(lipgloss.Color("240"))
+
+// Shown in the help row next to the table's own up/down bindings.
+var actionKeys = []key.Binding{
+	key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "scan")),
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "connect")),
+	key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "disconnect")),
+	key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+}
+
+// Shown in the help row while the password input has focus.
+var promptKeys = []key.Binding{
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "submit")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+}
 
 func main() {
 	networkManager, err := nm.NewNetworkManager()
@@ -94,6 +109,11 @@ type scanResultMsg struct {
 	err      error
 }
 
+type disconnectResultMsg struct {
+	ssid string
+	err  error
+}
+
 type connectResultMsg struct {
 	network network
 	err     error
@@ -107,8 +127,8 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	if m.prompting {
-		if key, ok := msg.(tea.KeyPressMsg); ok {
-			switch key.String() {
+		if keyPress, ok := msg.(tea.KeyPressMsg); ok {
+			switch keyPress.String() {
 			case "esc":
 				m.prompting = false
 				m.passwordInput.Blur()
@@ -152,10 +172,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.status = selected.ssid + ": " + selected.security + " networks are not supported yet"
 					return m, nil
 				}
-				return m.promptPassword(selected, "enter password for "+selected.ssid+" (esc to cancel)")
+				return m.promptPassword(selected, "enter password for "+selected.ssid+"")
 			}
 			m.status = "connecting to " + selected.ssid + "..."
 			return m, connectCmd(m.networkManager, m.adapter, selected)
+		case "d":
+			cursor := m.networkTable.Cursor()
+			if cursor < 0 || cursor >= len(m.networks) {
+				return m, nil
+			}
+			ssid := m.networks[cursor].ssid
+			m.status = "disconnecting from " + ssid + "..."
+			return m, disconnectCmd(m.networkManager, m.adapter, ssid)
 		}
 	case scanResultMsg:
 		m.scanning = false
@@ -170,7 +198,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.networkTable.SetRows(rows)
 		m.networkTable.SetCursor(0)
-		m.status = fmt.Sprintf("%d networks (s to scan, enter to connect)", len(m.networks))
+		m.status = fmt.Sprintf("%d networks", len(m.networks))
+		return m, nil
+	case disconnectResultMsg:
+		if msg.err != nil {
+			m.status = fmt.Sprintf("failed to disconnect from %s: %v", msg.ssid, msg.err)
+		} else {
+			m.status = "disconnected from " + msg.ssid
+		}
 		return m, nil
 	case connectResultMsg:
 		if msg.err == nil {
@@ -179,7 +214,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// A saved profile with a stale password, or a mistyped new one: ask again.
 		if supportsPassword(msg.network.accessPoint) {
-			return m.promptPassword(msg.network, fmt.Sprintf("failed to connect to %s: %v. Re-enter password (esc to cancel)", msg.network.ssid, msg.err))
+			return m.promptPassword(msg.network, fmt.Sprintf("failed to connect to %s: %v. Re-enter password", msg.network.ssid, msg.err))
 		}
 		m.status = fmt.Sprintf("failed to connect to %s: %v", msg.network.ssid, msg.err)
 		return m, nil
@@ -197,7 +232,12 @@ func (m model) promptPassword(n network, status string) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() tea.View {
-	view := baseStyle.Render(m.networkTable.View()) + "\n  " + m.networkTable.HelpView() + "\n  " + m.status + "\n"
+	helpKeys := append(m.networkTable.KeyMap.ShortHelp(), actionKeys...)
+	if m.prompting {
+		helpKeys = promptKeys
+	}
+	helpView := m.networkTable.Help.ShortHelpView(helpKeys)
+	view := baseStyle.Render(m.networkTable.View()) + "\n  " + helpView + "\n  " + m.status + "\n"
 	if m.prompting {
 		view += "  " + m.passwordInput.View() + "\n"
 	}
@@ -229,6 +269,35 @@ func connectWithPasswordCmd(networkManager nm.NetworkManager, adapter nm.DeviceW
 	return func() tea.Msg {
 		return connectResultMsg{network: n, err: connectWithPassword(networkManager, adapter, n, password)}
 	}
+}
+
+func disconnectCmd(networkManager nm.NetworkManager, adapter nm.DeviceWireless, ssid string) tea.Cmd {
+	return func() tea.Msg {
+		return disconnectResultMsg{ssid: ssid, err: disconnect(networkManager, adapter, ssid)}
+	}
+}
+
+// disconnect deactivates the adapter's active connection, but only if it is
+// the selected network. The saved profile is kept so it can be reconnected.
+func disconnect(networkManager nm.NetworkManager, adapter nm.DeviceWireless, ssid string) error {
+	activeAccessPoint, err := adapter.GetPropertyActiveAccessPoint()
+	if err != nil {
+		return err
+	}
+	if activeAccessPoint == nil {
+		return fmt.Errorf("not connected to any network")
+	}
+	if activeSSID, _ := activeAccessPoint.GetPropertySSID(); activeSSID != ssid {
+		return fmt.Errorf("not connected to this network")
+	}
+	activeConnection, err := adapter.GetPropertyActiveConnection()
+	if err != nil {
+		return err
+	}
+	if activeConnection == nil {
+		return fmt.Errorf("not connected to any network")
+	}
+	return networkManager.DeactivateConnection(activeConnection)
 }
 
 // connect activates a saved profile for the SSID if NetworkManager has one,
